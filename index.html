@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>太空隕石閃避 - 戰略進化版 (V3)</title>
+    <!-- 載入 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Tone.js 聲音庫 -->
+    <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d0d1a; /* 極深的太空藍 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 16px;
+            transition: all 0.3s ease; 
+        }
+        
+        /* 遊戲容器：在全螢幕模式下會覆蓋整個畫面 */
+        .game-container {
+            width: 100%;
+            max-width: 600px; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        /* 全螢幕模式的 CSS 樣式 */
+        .game-container.maximized {
+            position: fixed; 
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            max-width: none; 
+            padding: 0;
+            margin: 0;
+            z-index: 999;
+            background-color: #0b1424; 
+            border-radius: 0;
+            justify-content: center; 
+        }
+
+        /* 遊戲畫布與背景 */
+        #canvasWrapper {
+            position: relative;
+            overflow: hidden; 
+            border-radius: 12px;
+            box-shadow: 0 0 20px rgba(74, 85, 104, 0.8), 0 0 40px rgba(66, 153, 225, 0.5); 
+        }
+
+        #gameCanvas {
+            position: relative;
+            z-index: 10;
+            background-color: transparent; 
+            display: block;
+            touch-action: none; 
+            cursor: crosshair; 
+        }
+
+        .star-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-repeat: repeat;
+            z-index: 5;
+            pointer-events: none; 
+        }
+        
+        /* 訊息框樣式 */
+        .message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(17, 24, 39, 0.95);
+            border: 3px solid #6366f1;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.7);
+            text-align: center;
+            color: #ffffff;
+            z-index: 1000;
+        }
+        
+        .game-title {
+            color: #a5b4fc;
+            text-shadow: 0 0 5px #6366f1;
+        }
+        
+        /* 隱藏非遊戲元件在全螢幕模式下 */
+        .game-container.maximized .ui-control {
+            display: none !important;
+        }
+
+        /* HUD Bar 樣式 */
+        .bar-container {
+            width: 100%;
+            height: 12px;
+            background-color: #374151;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+            margin-bottom: 4px;
+        }
+        
+        .bar-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+
+    <!-- 全螢幕按鈕 -->
+    <button id="fullscreenToggle" 
+            class="ui-control px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-full transition duration-150 transform hover:scale-105 shadow-md mb-4 absolute top-4 right-4 sm:relative sm:top-auto sm:right-auto">
+        全螢幕
+    </button>
+
+    <div id="gameContainer" class="game-container">
+        <h1 class="text-3xl sm:text-4xl font-bold mb-4 game-title ui-control">
+            太空隕石閃避 - 戰略進化版
+        </h1>
+        
+        <!-- 畫布包裹層 (用於視差背景) -->
+        <div id="canvasWrapper">
+            <div id="stars1" class="star-layer"></div>
+            <div id="stars2" class="star-layer"></div>
+            <!-- 遊戲畫布 -->
+            <canvas id="gameCanvas" width="400" height="600" class="w-full max-w-sm"></canvas>
+        </div>
+
+        <!-- 操控說明和分數 (在全螢幕模式下隱藏) -->
+        <div class="mt-6 p-4 bg-gray-800 text-gray-300 rounded-xl shadow-lg w-full max-w-sm ui-control">
+            
+            <!-- 強化狀態顯示 -->
+            <div class="mb-4 space-y-2">
+                <!-- HP 條 -->
+                <div>
+                    <span class="text-sm font-semibold text-red-400">生命值 (HP):</span>
+                    <div id="healthBarContainer" class="bar-container">
+                        <div id="healthBar" class="bar-fill bg-red-600" style="width: 100%;"></div>
+                    </div>
+                </div>
+                
+                <!-- EMP 充能條 -->
+                <div>
+                    <span class="text-sm font-semibold text-cyan-400">EMP 充能:</span>
+                    <div id="empBarContainer" class="bar-container">
+                        <div id="empBar" class="bar-fill bg-cyan-500" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 總體分數與額外生命 -->
+            <div class="flex justify-between items-center mb-4 border-t border-gray-700 pt-2">
+                <p id="scoreDisplay" class="text-lg font-bold text-green-400">分數: 0</p>
+                <p id="livesDisplay" class="text-base font-bold text-red-500">額外生命: 🧡🧡🧡</p>
+            </div>
+            
+            <!-- 操作說明 -->
+            <p class="text-sm sm:text-base font-semibold text-center mb-2 border-t border-gray-700 pt-2">操作說明：</p>
+            <div class="grid grid-cols-2 gap-4 text-center">
+                <div class="bg-gray-700 p-2 rounded-lg">
+                    <span class="text-lg text-yellow-400 font-bold block">WASD / 方向鍵</span>
+                    <span class="text-xs">移動 (前後左右)</span>
+                </div>
+                <div class="bg-gray-700 p-2 rounded-lg">
+                    <span class="text-lg text-red-400 font-bold block">Space / 點擊</span>
+                    <span class="text-xs">主要射擊</span>
+                </div>
+                <div class="bg-gray-700 p-2 rounded-lg col-span-2">
+                    <button id="empButton" class="w-full text-lg font-bold rounded-full py-1 transition duration-150 transform hover:scale-105" disabled>
+                        EMP 炸彈 (E 鍵)
+                    </button>
+                    <span class="text-xs block text-cyan-400" id="empStatus">充能中...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 訊息框容器 -->
+    <div id="messageBoxContainer"></div>
+
+    <script>
+        // 初始化 Tone.js (聲音系統)
+        const synth = new Tone.Synth().toDestination();
+        const noise = new Tone.NoiseSynth({
+            noise: { type: 'pink' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.05 }
+        }).toDestination();
+        const pickupEffect = new Tone.MembraneSynth({
+            envelope: { attack: 0.002, decay: 0.1, sustain: 0.1, release: 0.2 },
+            octaves: 1, pitchDecay: 0.05
+        }).toDestination();
+        const gameOverSynth = new Tone.Synth({
+            oscillator: { type: "sine" },
+            envelope: { attack: 0.1, decay: 0.5, sustain: 0, release: 1 }
+        }).toDestination();
+        
+        // 確保在使用者互動後啟動音訊環境 (瀏覽器要求)
+        document.body.addEventListener('click', () => {
+            if (Tone.context.state !== 'running') {
+                Tone.start();
+            }
+        }, { once: true });
+
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.getElementById('gameContainer');
+        const fullscreenToggle = document.getElementById('fullscreenToggle');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const livesDisplay = document.getElementById('livesDisplay'); 
+        const messageBoxContainer = document.getElementById('messageBoxContainer');
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        const stars1 = document.getElementById('stars1');
+        const stars2 = document.getElementById('stars2');
+        
+        // HUD 元素
+        const healthBar = document.getElementById('healthBar');
+        const empBar = document.getElementById('empBar');
+        const empButton = document.getElementById('empButton');
+        const empStatus = document.getElementById('empStatus');
+        
+        let isMaximized = false; 
+        let backgroundOffset = 0; 
+
+        let gameState = {
+            isRunning: false,
+            score: 0,
+            lastTime: 0,
+            deltaTime: 0,
+            meteorSpawnTimer: 0,
+            meteorSpawnInterval: 600, 
+            meteorSpeedBase: 2,
+            levelUpTimer: 0,
+            levelUpInterval: 5000, 
+            powerUpSpawnTimer: 0, 
+            powerUpSpawnInterval: 8000,
+            
+            // --- NEW: 難度飆升設定 ---
+            level2Unlocked: false, // 標記是否已達到 1000 分
+            level2Threshold: 1000, // 1000分門檻
+            // --------------------------
+        };
+
+        let player = {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 20,
+            speed: 5,
+            color: '#34d399', 
+            movingLeft: false,
+            movingRight: false,
+            movingUp: false,    
+            movingDown: false, 
+            fireCooldown: 0, 
+            fireRate: 200, 
+            lives: 3, 
+            maxHealth: 3,           
+            currentHealth: 3,       
+            invulnerable: false,    
+            invulTimer: 0,          
+            shielded: false, 
+            shieldDuration: 3000, 
+            shieldTimer: 0,
+            multiplier: 1, 
+            multiplierTimer: 0,
+            multiplierDuration: 5000,
+            empCharge: 0,           
+            empCooldown: 20000      
+        };
+
+        let meteors = [];
+        let projectiles = []; 
+        let powerUps = []; 
+        let explosions = []; 
+
+        // ------------------------------------
+        // 全螢幕和響應式控制 (與 V2 相同)
+        // ------------------------------------
+        function toggleMaximize() {
+            isMaximized = !isMaximized;
+
+            if (isMaximized) {
+                gameContainer.classList.add('maximized');
+                fullscreenToggle.textContent = '退出全螢幕';
+            } else {
+                gameContainer.classList.remove('maximized');
+                fullscreenToggle.textContent = '全螢幕';
+            }
+            
+            resizeCanvas(); 
+        }
+
+        fullscreenToggle.addEventListener('click', toggleMaximize);
+        window.addEventListener('resize', resizeCanvas);
+
+
+        function resizeCanvas() {
+            const oldWidth = canvas.width;
+            const oldHeight = canvas.height;
+            
+            let newWidth, newHeight;
+            const targetRatio = 4 / 6; 
+            
+            if (isMaximized) {
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+
+                const currentRatio = viewportWidth / viewportHeight;
+
+                if (currentRatio > targetRatio) {
+                    newHeight = viewportHeight;
+                    newWidth = viewportHeight * targetRatio;
+                } else {
+                    newWidth = viewportWidth;
+                    newHeight = viewportWidth / targetRatio;
+                }
+
+            } else {
+                const maxWidth = Math.min(gameContainer.clientWidth, 600); 
+                newWidth = maxWidth;
+                newHeight = maxWidth * 1.5;
+            }
+
+            // 設置新的尺寸
+            canvasWrapper.style.width = newWidth + 'px';
+            canvasWrapper.style.height = newHeight + 'px';
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+            
+            // 調整現有遊戲元素的大小和位置
+            if (gameState.isRunning) {
+                const widthRatio = newWidth / oldWidth;
+                const heightRatio = newHeight / oldHeight;
+
+                scaleElements(widthRatio, heightRatio, meteors);
+                scaleElements(widthRatio, heightRatio, projectiles);
+                scaleElements(widthRatio, heightRatio, powerUps);
+                
+                // 調整玩家的尺寸和位置
+                player.width = 20 * (newWidth / 400);
+                player.height = 20 * (newWidth / 400);
+                player.speed = newWidth / 80; 
+                player.x = (player.x / oldWidth) * newWidth;
+                player.y = (player.y / oldHeight) * newHeight; 
+
+                // 調整爆炸粒子
+                explosions.forEach(exp => {
+                    if (!exp.isEMP) {
+                        exp.particles.forEach(p => {
+                            p.x = (p.x / oldWidth) * newWidth;
+                            p.y = (p.y / oldHeight) * newHeight;
+                            p.radius *= widthRatio;
+                            p.speedX *= widthRatio;
+                            p.speedY *= heightRatio;
+                        });
+                    } else {
+                         exp.maxRadius = Math.max(newWidth, newHeight) * 0.7; // 調整 EMP 半徑
+                    }
+                });
+            } else {
+                // 如果遊戲未開始，只是初始化，確保玩家位置正確
+                player.width = 20 * (newWidth / 400);
+                player.height = 20 * (newWidth / 400);
+                player.speed = newWidth / 80;
+                player.x = newWidth / 2;
+                player.y = newHeight - player.height * 2;
+            }
+
+            // 重新繪製背景星空 pattern (因為尺寸變了)
+            createStarPatterns(newWidth, newHeight);
+        }
+
+        function scaleElements(widthRatio, heightRatio, elements) {
+            elements.forEach(item => {
+                item.x *= widthRatio;
+                item.y *= heightRatio;
+                if (item.radius) item.radius *= widthRatio;
+                if (item.speed) item.speed *= heightRatio;
+            });
+        }
+        
+        // 視差背景
+        function createStarPatterns(w, h) {
+            const starCanvas = document.createElement('canvas');
+            starCanvas.width = w / 2;
+            starCanvas.height = h / 2;
+            const starCtx = starCanvas.getContext('2d');
+            
+            // Layer 1 (慢速，大星)
+            starCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            for (let i = 0; i < 20; i++) {
+                starCtx.fillRect(Math.random() * starCanvas.width, Math.random() * starCanvas.height, 2, 2);
+            }
+            stars1.style.backgroundImage = `url(${starCanvas.toDataURL()})`;
+            stars1.style.backgroundSize = `${starCanvas.width}px ${starCanvas.height}px`;
+
+            // Layer 2 (快速，小星)
+            starCtx.clearRect(0, 0, starCanvas.width, starCanvas.height);
+            starCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            for (let i = 0; i < 60; i++) {
+                starCtx.fillRect(Math.random() * starCanvas.width, Math.random() * starCanvas.height, 1, 1);
+            }
+            stars2.style.backgroundImage = `url(${starCanvas.toDataURL()})`;
+            stars2.style.backgroundSize = `${starCanvas.width}px ${starCanvas.height}px`;
+        }
+
+        function updateParallaxBackground() {
+            if (!gameState.isRunning) return;
+            
+            backgroundOffset = (backgroundOffset + 0.5) % canvas.height; 
+
+            stars1.style.backgroundPositionY = `${backgroundOffset * 0.2}px`;
+            stars2.style.backgroundPositionY = `${backgroundOffset * 0.8}px`;
+        }
+
+
+        // ------------------------------------
+        // 遊戲元素繪製
+        // ------------------------------------
+
+        function drawPlayer() {
+            
+            // 無敵狀態下閃爍
+            if (player.invulnerable) {
+                ctx.globalAlpha = Math.sin(gameState.lastTime / 50) > 0 ? 0.4 : 1.0;
+            }
+
+            // 繪製護盾光暈
+            if (player.shielded) {
+                const glowRadius = player.width * 1.5 + Math.sin(gameState.lastTime / 100) * 2;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y + player.height / 2, glowRadius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(102, 126, 234, ${0.5 + Math.sin(gameState.lastTime / 300) * 0.2})`; 
+                ctx.fill();
+            }
+
+            // 繪製乘數光暈
+            if (player.multiplier > 1) {
+                const glowRadius = player.width * 1.5 + Math.sin(gameState.lastTime / 80) * 3;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y + player.height / 2, glowRadius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(52, 211, 153, ${0.3 + Math.sin(gameState.lastTime / 250) * 0.2})`; 
+                ctx.fill();
+            }
+
+
+            // 繪製太空船主體
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y);
+            ctx.lineTo(player.x - player.width / 2, player.y + player.height);
+            ctx.lineTo(player.x + player.width / 2, player.y + player.height);
+            ctx.closePath();
+            ctx.fill();
+
+            // 增加推進器光暈效果
+            ctx.fillStyle = 'rgba(252, 211, 77, 0.8)';
+            ctx.fillRect(player.x - 3 * (canvas.width/400), player.y + player.height, 6 * (canvas.width/400), 5 * (canvas.width/400));
+            
+            ctx.globalAlpha = 1.0; // 重置透明度
+        }
+
+        function drawMeteor(meteor) {
+            ctx.fillStyle = meteor.color;
+            ctx.beginPath();
+            ctx.arc(meteor.x, meteor.y, meteor.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawProjectile(p) {
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawPowerUp(pu) {
+            ctx.beginPath();
+            ctx.arc(pu.x, pu.y, pu.radius, 0, Math.PI * 2);
+            ctx.fillStyle = pu.color;
+            ctx.fill();
+            
+            ctx.fillStyle = '#1a202c'; 
+            ctx.font = `bold ${pu.radius * 0.9}px Inter`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(pu.label, pu.x, pu.y);
+        }
+
+        function drawExplosion(explosion) {
+            if (explosion.isEMP) {
+                drawEmpPulse(explosion);
+                return;
+            }
+
+            explosion.particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.alpha;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0; 
+        }
+
+        function drawEmpPulse(emp) {
+            const currentRadius = emp.maxRadius * (emp.time / emp.duration);
+            const alpha = 1 - (emp.time / emp.duration);
+
+            ctx.beginPath();
+            ctx.arc(emp.x, emp.y, currentRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = emp.color;
+            ctx.lineWidth = 10 * (canvas.width / 400) * alpha; 
+            ctx.globalAlpha = alpha;
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+        }
+
+
+        function updateHUD() {
+            // 更新額外生命 (Lives)
+            const hearts = '🧡'.repeat(player.lives);
+            livesDisplay.textContent = `額外生命: ${hearts}`;
+            
+            // 更新 HP 條
+            const healthPercent = player.currentHealth / player.maxHealth;
+            healthBar.style.width = `${healthPercent * 100}%`;
+            healthBar.style.backgroundColor = healthPercent > 0.5 ? '#f87171' : (healthPercent > 0.2 ? '#fbbf24' : '#ef4444');
+
+            // 更新 EMP 條和按鈕
+            const empPercent = player.empCharge / 100;
+            empBar.style.width = `${empPercent * 100}%`;
+            
+            if (player.empCharge >= 100) {
+                empButton.disabled = false;
+                empButton.style.backgroundColor = '#06b6d4'; // Cyan-500
+                empButton.style.color = '#1a202c';
+                empStatus.textContent = '充能完成，按下 E 或點擊發射！';
+            } else {
+                empButton.disabled = true;
+                empButton.style.backgroundColor = '#4b5563'; // Gray
+                empButton.style.color = '#9ca3af';
+                empStatus.textContent = `充能中... (${Math.floor(player.empCharge)}%)`;
+            }
+        }
+
+
+        // ------------------------------------
+        // 遊戲邏輯更新
+        // ------------------------------------
+
+        function updatePlayer() {
+            // 水平移動
+            if (player.movingLeft) {
+                player.x -= player.speed;
+            }
+            if (player.movingRight) {
+                player.x += player.speed;
+            }
+            // 垂直移動
+            if (player.movingUp) {
+                player.y -= player.speed;
+            }
+            if (player.movingDown) {
+                player.y += player.speed;
+            }
+
+            // 邊界檢查
+            if (player.x < player.width / 2) {
+                player.x = player.width / 2;
+            }
+            if (player.x > canvas.width - player.width / 2) {
+                player.x = canvas.width - player.width / 2;
+            }
+            
+            const topLimit = canvas.height * 0.5; 
+            const bottomLimit = canvas.height - player.height; 
+
+            if (player.y < topLimit) {
+                player.y = topLimit;
+            }
+            if (player.y > bottomLimit) {
+                player.y = bottomLimit;
+            }
+
+
+            // 處理護盾計時器
+            if (player.shielded) {
+                player.shieldTimer -= gameState.deltaTime;
+                if (player.shieldTimer <= 0) {
+                    player.shielded = false;
+                }
+            }
+
+            // 處理乘數計時器
+            if (player.multiplier > 1) {
+                player.multiplierTimer -= gameState.deltaTime;
+                if (player.multiplierTimer <= 0) {
+                    player.multiplier = 1;
+                }
+            }
+
+            // 處理無敵計時器
+            if (player.invulnerable) {
+                player.invulTimer -= gameState.deltaTime;
+                if (player.invulTimer <= 0) {
+                    player.invulnerable = false;
+                }
+            }
+        }
+        
+        function createProjectile() {
+            if (gameState.isRunning && player.fireCooldown <= 0) {
+                synth.triggerAttackRelease('C5', '8n'); 
+                projectiles.push({
+                    x: player.x,
+                    y: player.y,
+                    radius: 3 * (canvas.width / 400), 
+                    speed: canvas.height / 75, 
+                    color: '#fef3c7'
+                });
+                player.fireCooldown = player.fireRate; 
+            }
+        }
+
+        // NEW: EMP Bomb Function
+        function fireEmpBomb() {
+            if (gameState.isRunning && player.empCharge >= 100) {
+                player.empCharge = 0;
+                
+                // 1. Audio Effect (Large low-frequency blast)
+                Tone.start();
+                const empSynth = new Tone.MembraneSynth({
+                    envelope: { attack: 0.01, decay: 0.5, sustain: 0, release: 1 },
+                    pitchDecay: 0.1,
+                    octaves: 3
+                }).toDestination();
+                empSynth.triggerAttackRelease("A2", "2n");
+                
+                // 2. Visual EMP Pulse
+                explosions.push({ 
+                    isEMP: true, 
+                    x: canvas.width / 2, 
+                    y: canvas.height / 2, 
+                    radius: 0, 
+                    maxRadius: Math.max(canvas.width, canvas.height) * 0.7, 
+                    color: '#a5f3fc',
+                    time: 0,
+                    duration: 500 
+                });
+
+                // 3. Clear all threats
+                meteors.forEach(m => createExplosion(m.x, m.y, m.color));
+                meteors = [];
+                projectiles = []; 
+
+                updateHUD(); 
+            }
+        }
+        
+        function updateEmpCharge(dt) {
+            if (player.empCharge < 100) {
+                // Recharge rate relative to the 20-second cooldown
+                const chargeRate = (100 / player.empCooldown) * dt;
+                player.empCharge = Math.min(100, player.empCharge + chargeRate);
+            }
+        }
+
+        function updateProjectiles() {
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const p = projectiles[i];
+                p.y -= p.speed;
+
+                if (p.y + p.radius < 0) {
+                    projectiles.splice(i, 1);
+                }
+            }
+        }
+        
+        function createExplosion(x, y, color) {
+            const numParticles = 8;
+            const particleSpeed = 4 * (canvas.width / 400); 
+            
+            const particles = [];
+            for(let i = 0; i < numParticles; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    radius: Math.random() * 2 + 1,
+                    speedX: Math.random() * particleSpeed * 2 - particleSpeed,
+                    speedY: Math.random() * particleSpeed * 2 - particleSpeed,
+                    color: color,
+                    alpha: 1.0,
+                    life: 500
+                });
+            }
+            explosions.push({ particles, time: 0 });
+        }
+
+        function updateExplosions() {
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const exp = explosions[i];
+                exp.time += gameState.deltaTime;
+
+                if (exp.isEMP) {
+                    // EMP 效果持續 500ms
+                    if (exp.time > exp.duration) {
+                        explosions.splice(i, 1);
+                    }
+                    continue;
+                }
+
+                // 普通爆炸效果
+                if (exp.time > 500) { 
+                    explosions.splice(i, 1);
+                    continue;
+                }
+
+                exp.particles.forEach(p => {
+                    p.x += p.speedX * (gameState.deltaTime / 100);
+                    p.y += p.speedY * (gameState.deltaTime / 100);
+                    p.alpha = 1 - (exp.time / 500); 
+                });
+            }
+        }
+
+        function spawnPowerUp() {
+            const radius = 10 * (canvas.width / 400);
+            const x = Math.random() * (canvas.width - radius * 2) + radius;
+            
+            // 隨機選擇道具類型
+            const types = ['shield', 'multiplier', 'health'];
+            const type = types[Math.floor(Math.random() * types.length)];
+
+            let color, label;
+            if (type === 'shield') {
+                color = '#6366f1'; 
+                label = 'S';
+            } else if (type === 'multiplier') {
+                color = '#34d399'; 
+                label = 'X2';
+            } else { // 'health' (NEW)
+                color = '#ef4444';
+                label = '+HP';
+            }
+
+            powerUps.push({
+                x: x,
+                y: -radius,
+                radius: radius,
+                speed: 3 * (canvas.height / 600),
+                color: color,
+                type: type,
+                label: label
+            });
+        }
+        
+        function updatePowerUps() {
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                const pu = powerUps[i];
+                pu.y += pu.speed;
+
+                if (pu.y - pu.radius > canvas.height) {
+                    powerUps.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnMeteor() {
+            const minRadius = 8 * (canvas.width / 400);
+            const maxRadius = 18 * (canvas.width / 400);
+            const radius = Math.random() * (maxRadius - minRadius) + minRadius;
+            const x = Math.random() * (canvas.width - radius * 2) + radius;
+            const speed = (gameState.meteorSpeedBase + Math.random() * 1.5) * (canvas.height / 600);
+            const colors = ['#f87171', '#fbbf24', '#a78bfa']; 
+            
+            meteors.push({
+                x: x,
+                y: -radius,
+                radius: radius,
+                speed: speed,
+                color: colors[Math.floor(Math.random() * colors.length)]
+            });
+        }
+
+        function updateMeteors() {
+            for (let i = meteors.length - 1; i >= 0; i--) {
+                const m = meteors[i];
+                m.y += m.speed;
+
+                if (m.y - m.radius > canvas.height) {
+                    meteors.splice(i, 1);
+                }
+            }
+        }
+
+        function checkShotCollisions() {
+            for (let i = meteors.length - 1; i >= 0; i--) {
+                const m = meteors[i];
+                let hit = false;
+                
+                for (let j = projectiles.length - 1; j >= 0; j--) {
+                    const p = projectiles[j];
+                    
+                    const dx = m.x - p.x;
+                    const dy = m.y - p.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < m.radius + p.radius) {
+                        noise.triggerAttackRelease("16n"); 
+                        createExplosion(m.x, m.y, m.color); 
+                        projectiles.splice(j, 1); 
+                        hit = true;
+                        gameState.score += Math.floor(m.radius / 5) * 5 * player.multiplier; 
+                        break; 
+                    }
+                }
+
+                if (hit) {
+                    meteors.splice(i, 1);
+                }
+            }
+        }
+
+        function checkPowerUpCollisions() {
+             for (let i = powerUps.length - 1; i >= 0; i--) {
+                const pu = powerUps[i];
+                
+                const playerCenterY = player.y + (player.height * 2 / 3); 
+                const dx = pu.x - player.x;
+                const dy = pu.y - playerCenterY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < pu.radius + player.width / 2) {
+                    applyPowerUp(pu.type);
+                    powerUps.splice(i, 1); 
+                }
+            }
+        }
+        
+        function applyPowerUp(type) {
+            pickupEffect.triggerAttackRelease('C4', '8n'); 
+            
+            if (type === 'shield') {
+                player.shielded = true;
+                player.shieldTimer = player.shieldDuration;
+            } else if (type === 'multiplier') {
+                player.multiplier = 2;
+                player.multiplierTimer = player.multiplierDuration;
+            } else if (type === 'health') { // Health PowerUp
+                player.currentHealth = Math.min(player.maxHealth, player.currentHealth + 1);
+            }
+        }
+        
+        function respawnPlayer() {
+            // 重生，重設 HP 並給予無敵
+            player.currentHealth = player.maxHealth;
+            player.invulnerable = true;
+            player.invulTimer = 3000; // 3 秒無敵
+            player.x = canvas.width / 2;
+            player.y = canvas.height - player.height * 2;
+        }
+
+
+        function checkCollisions() {
+            for (let i = meteors.length - 1; i >= 0; i--) {
+                const m = meteors[i];
+                
+                const dx = m.x - player.x;
+                const playerCenterY = player.y + (player.height * 2 / 3); 
+                const dy = m.y - playerCenterY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < m.radius + player.width / 2) {
+                    
+                    // 1. 無敵狀態下
+                    if (player.invulnerable) {
+                        noise.triggerAttackRelease("16n"); 
+                        createExplosion(m.x, m.y, '#ffffff'); 
+                        meteors.splice(i, 1);
+                        return false; 
+                    }
+                    
+                    // 2. 護盾狀態下
+                    if (player.shielded) {
+                        player.shielded = false; 
+                        createExplosion(m.x, m.y, '#ffffff'); 
+                        meteors.splice(i, 1);
+                        return false; 
+                    } 
+                    
+                    // 3. 受到傷害
+                    player.currentHealth -= 1;
+                    
+                    // 受到傷害的音效
+                    const damageNoise = new Tone.NoiseSynth({
+                        noise: { type: 'white' }, envelope: { attack: 0.005, decay: 0.2, sustain: 0, release: 0.1 }
+                    }).toDestination();
+                    damageNoise.triggerAttackRelease("8n", Tone.now());
+
+                    createExplosion(m.x, m.y, m.color);
+                    meteors.splice(i, 1); 
+                    
+                    // 檢查是否需要重生或遊戲結束
+                    if (player.currentHealth <= 0) {
+                        player.lives -= 1;
+                        if (player.lives < 0) {
+                            gameOver();
+                            return true; 
+                        } else {
+                            // 重生
+                            respawnPlayer();
+                            player.fireCooldown = 1000; // 短暫停火
+                            return false; 
+                        }
+                    }
+                    
+                    return false;
+                }
+            }
+            return false;
+        }
+        
+        function updateLevel() {
+            // Gradual difficulty increase
+            gameState.meteorSpawnInterval = Math.max(100, gameState.meteorSpawnInterval - 15);
+            gameState.meteorSpeedBase += 0.3;
+        }
+
+        // --- NEW: 檢查 1000 分難度飆升 ---
+        function checkDifficultySpike() {
+            if (!gameState.level2Unlocked && gameState.score >= gameState.level2Threshold) {
+                gameState.level2Unlocked = true;
+                
+                // 難度爆炸性提升
+                gameState.meteorSpawnInterval = 100; // 從此以後，間隔不會少於 100
+                gameState.meteorSpeedBase = 5;      // 基礎速度大幅提升
+                gameState.levelUpTimer = 0;         // 重置計時器
+                
+                // 視覺/聽覺確認
+                Tone.start();
+                const spikeSynth = new Tone.Synth().toDestination();
+                spikeSynth.triggerAttackRelease("C6", "8n");
+                spikeSynth.triggerAttackRelease("G5", "8n", Tone.now() + 0.1);
+                spikeSynth.triggerAttackRelease("C6", "8n", Tone.now() + 0.2);
+
+                showMessageBox(
+                    '警報！難度飆升！',
+                    '您已達到 1000 分！隕石速度和數量大幅增加！祝您好運！',
+                    '繼續戰鬥',
+                    () => { messageBoxContainer.innerHTML = ''; } // 關閉訊息框
+                );
+            }
+        }
+        // ------------------------------------
+
+        // ------------------------------------
+        // 遊戲流程控制
+        // ------------------------------------
+
+        function showMessageBox(title, message, buttonText, action) {
+            messageBoxContainer.innerHTML = '';
+            
+            const box = document.createElement('div');
+            box.className = 'message-box';
+            
+            box.innerHTML = `
+                <h2 class="text-2xl font-bold mb-4 text-indigo-400">${title}</h2>
+                <p class="mb-6 text-base">${message}</p>
+                <button id="messageButton" class="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-full transition duration-150 transform hover:scale-105 shadow-md">
+                    ${buttonText}
+                </button>
+            `;
+            
+            messageBoxContainer.appendChild(box);
+            
+            document.getElementById('messageButton').addEventListener('click', () => {
+                messageBoxContainer.innerHTML = '';
+                action();
+            });
+        }
+
+        function gameOver() {
+            gameState.isRunning = false;
+            
+            // 遊戲結束音效 (低沉下降的音階)
+            gameOverSynth.triggerAttackRelease("C3", "0.5");
+            gameOverSynth.triggerAttackRelease("G2", "0.5", Tone.now() + 0.2);
+            gameOverSynth.triggerAttackRelease("C2", "1n", Tone.now() + 0.4);
+
+            showMessageBox(
+                '遊戲結束！',
+                `最終分數: ${Math.floor(gameState.score)}！這次有了 EMP，下次分數會更高！`,
+                '重新開始',
+                initializeGame
+            );
+        }
+
+        function initializeGame() {
+            // 重設玩家屬性，確保響應式調整後的尺寸是基礎
+            const initialWidth = canvas.width;
+            player.width = 20 * (initialWidth / 400);
+            player.height = 20 * (initialWidth / 400);
+            player.speed = initialWidth / 80;
+
+            // 重置狀態
+            gameState.score = 0;
+            gameState.lastTime = 0;
+            gameState.meteorSpawnTimer = 0;
+            gameState.levelUpTimer = 0;
+            gameState.powerUpSpawnTimer = 0;
+            gameState.meteorSpawnInterval = 600;
+            gameState.meteorSpeedBase = 2;
+            gameState.level2Unlocked = false; // 重置難度標記
+            meteors = [];
+            projectiles = []; 
+            powerUps = []; 
+            explosions = []; 
+            
+            // 重置玩家狀態 (包含新增的 HP/EMP 狀態)
+            player.x = canvas.width / 2;
+            player.y = canvas.height - player.height * 2;
+            player.movingLeft = false;
+            player.movingRight = false;
+            player.movingUp = false;    
+            player.movingDown = false;  
+            player.fireCooldown = 0; 
+            player.lives = 3; 
+            player.maxHealth = 3;
+            player.currentHealth = 3; 
+            player.invulnerable = false;
+            player.invulTimer = 0;
+            player.shielded = false; 
+            player.multiplier = 1; 
+            player.multiplierTimer = 0;
+            player.empCharge = 0; 
+
+            updateHUD(); 
+
+            showMessageBox(
+                '太空隕石閃避 - 戰略進化版 (V3)',
+                '新增 HP 系統與強大的 EMP 炸彈 (E 鍵)！挑戰 1000 分，解鎖地獄難度！',
+                '開始遊戲',
+                startGame
+            );
+        }
+        
+        function startGame() {
+            gameState.isRunning = true;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(currentTime) {
+            if (!gameState.isRunning) {
+                return;
+            }
+
+            // 計算時間差
+            if (gameState.lastTime === 0) gameState.lastTime = currentTime;
+            gameState.deltaTime = currentTime - gameState.lastTime;
+            gameState.lastTime = currentTime;
+            
+            const dt = gameState.deltaTime; 
+
+            // 更新冷卻與計時器
+            if (player.fireCooldown > 0) player.fireCooldown -= dt;
+            gameState.score += dt / 1000;
+            gameState.meteorSpawnTimer += dt;
+            gameState.levelUpTimer += dt;
+            gameState.powerUpSpawnTimer += dt;
+            
+            // 更新 EMP 充能
+            updateEmpCharge(dt);
+            
+            // -------------------- 難度與生成 --------------------
+            
+            checkDifficultySpike(); // <-- NEW: 檢查 1000 分難度飆升
+
+            if (gameState.levelUpTimer > gameState.levelUpInterval) {
+                updateLevel();
+                gameState.levelUpTimer = 0;
+            }
+
+            if (gameState.meteorSpawnTimer > gameState.meteorSpawnInterval) {
+                spawnMeteor();
+                gameState.meteorSpawnTimer = 0;
+            }
+            
+            if (gameState.powerUpSpawnTimer > gameState.powerUpSpawnInterval) {
+                spawnPowerUp();
+                gameState.powerUpSpawnTimer = 0;
+            }
+
+            // -------------------- 更新與繪製 --------------------
+
+            updateParallaxBackground(); 
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+
+            updatePlayer();
+            updateMeteors();
+            updateProjectiles(); 
+            updatePowerUps(); 
+            updateExplosions(); 
+
+            meteors.forEach(drawMeteor);
+            powerUps.forEach(drawPowerUp); 
+            drawPlayer();
+            projectiles.forEach(drawProjectile); 
+            explosions.forEach(drawExplosion); 
+            
+            // -------------------- 碰撞檢測 --------------------
+            checkPowerUpCollisions(); 
+            checkShotCollisions(); 
+            if (!checkCollisions()) { 
+                requestAnimationFrame(gameLoop);
+            }
+            
+            // -------------------- HUD --------------------
+            scoreDisplay.textContent = `分數: ${Math.floor(gameState.score)}`;
+            updateHUD();
+        }
+
+        // 啟動點
+        window.onload = function() {
+            resizeCanvas(); 
+            createStarPatterns(canvas.width, canvas.height); 
+            initializeGame();
+        }
+
+        // --- 鍵盤控制 ---
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+                player.movingLeft = true;
+            } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+                player.movingRight = true;
+            } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+                player.movingUp = true;
+            } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+                player.movingDown = true;
+            } else if (e.key === ' ' && gameState.isRunning) { 
+                createProjectile();
+                e.preventDefault(); 
+            } else if ((e.key === 'e' || e.key === 'E') && gameState.isRunning) {
+                // EMP Keybind
+                fireEmpBomb();
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+                player.movingLeft = false;
+            } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+                player.movingRight = false;
+            } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+                player.movingUp = false;
+            } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+                player.movingDown = false;
+            }
+        });
+        
+        // --- UI 按鈕射擊/EMP ---
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameState.isRunning) {
+                createProjectile();
+            }
+        });
+
+        empButton.addEventListener('click', () => {
+             fireEmpBomb();
+        });
+
+        // --- 觸控控制 --- (僅處理左右移動和射擊)
+        function handleTouch(e) {
+            e.preventDefault(); 
+            
+            if (!gameState.isRunning) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+
+            // 點擊左半邊移動左，右半邊移動右
+            if (touchX < canvas.width / 2) {
+                player.movingLeft = true;
+                player.movingRight = false;
+            } else {
+                player.movingRight = true;
+                player.movingLeft = false;
+            }
+            // 觸摸即射擊 (簡化觸控操作)
+            createProjectile();
+        }
+        
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            player.movingLeft = false;
+            player.movingRight = false;
+        }
+
+        canvas.addEventListener('touchstart', handleTouch);
+        canvas.addEventListener('touchmove', handleTouch);
+        canvas.addEventListener('touchend', handleTouchEnd);
+        canvas.addEventListener('touchcancel', handleTouchEnd);
+
+
+    </script>
+</body>
+</html>
